@@ -1,0 +1,1021 @@
+<html>
+  <head>
+    <script src="https://aframe.io/releases/1.7.1/aframe.min.js"></script>
+    <script>
+        AFRAME.registerComponent('snap-to-mesh', {
+          schema: {
+            target: { type: 'selector' },
+            offset: { type: 'number', default: 1.5 },
+            rayHeight: { type: 'number', default: 10 }
+          },
+          
+          init: function () {
+            this.raycaster = new THREE.Raycaster();
+            this.downVector = new THREE.Vector3(0, -1, 0);
+            
+            // Variables auxiliares pre-alojadas en memoria por rendimiento (Best Practice en bucles tick)
+            this.worldPos = new THREE.Vector3();
+            this.localTargetPos = new THREE.Vector3();
+          },
+
+          tick: function () {
+            if (!this.data.target) return;
+            
+            const mesh = this.data.target.getObject3D('mesh');
+            if (!mesh) return; 
+
+            const el3D = this.el.object3D;
+            
+            // 1. Obtener la posición exacta en el mundo real (saltando las escalas de los padres)
+            el3D.getWorldPosition(this.worldPos);
+            
+            // 2. Disparar el rayo desde esa altura global
+            const rayOrigin = new THREE.Vector3(this.worldPos.x, this.worldPos.y + this.data.rayHeight, this.worldPos.z);
+            this.raycaster.set(rayOrigin, this.downVector);
+
+            const intersects = this.raycaster.intersectObject(mesh, true);
+
+            if (intersects.length > 0) {
+              // 3. Obtener el punto de impacto global
+              const worldGroundPoint = intersects[0].point;
+              
+              // 4. Transformar el punto global al sistema de coordenadas local del padre (el circuito escalado)
+              this.localTargetPos.copy(worldGroundPoint);
+              if (el3D.parent) {
+                el3D.parent.worldToLocal(this.localTargetPos);
+              }
+              
+              // 5. Aplicar la nueva altura usando el valor local corregido
+              el3D.position.y += (this.localTargetPos.y + this.data.offset - el3D.position.y) * 0.2; 
+            }
+          }
+        });
+        
+        AFRAME.registerComponent('lock-pitch', {
+          dependencies: ['look-controls'],
+          schema: {
+            margin: { type: 'number', default: 15 } // Margen de movimiento en grados (arriba y abajo)
+          },
+          
+          init: function () {
+            const lookControls = this.el.components['look-controls'];
+
+            // Three.js calcula la rotación en radianes. Convertimos los grados del HTML a radianes.
+            this.maxPitch = THREE.MathUtils.degToRad(this.data.margin);
+            this.minPitch = -this.maxPitch;
+
+            // 1. Intercepción del Ratón
+            const originalMouseMove = lookControls.onMouseMove.bind(lookControls);
+            lookControls.onMouseMove = (evt) => {
+              originalMouseMove(evt);
+              // Aplicamos el límite: Si el valor supera el máximo, se queda en el máximo.
+              lookControls.pitchObject.rotation.x = THREE.MathUtils.clamp(
+                lookControls.pitchObject.rotation.x, 
+                this.minPitch, 
+                this.maxPitch
+              );
+            };
+
+            // 2. Intercepción Táctil
+            const originalTouchMove = lookControls.onTouchMove.bind(lookControls);
+            lookControls.onTouchMove = (evt) => {
+              originalTouchMove(evt);
+              lookControls.pitchObject.rotation.x = THREE.MathUtils.clamp(
+                lookControls.pitchObject.rotation.x, 
+                this.minPitch, 
+                this.maxPitch
+              );
+            };
+          },
+
+          tick: function () {
+            // 3. Fallback continuo para garantizar que el límite no se rompa por físicas o VR
+            const lookControls = this.el.components['look-controls'];
+            lookControls.pitchObject.rotation.x = THREE.MathUtils.clamp(
+              lookControls.pitchObject.rotation.x, 
+              this.minPitch, 
+              this.maxPitch
+            );
+          }
+        });
+
+
+    AFRAME.registerComponent('waypoint-follower', {
+  schema: {
+    speed:     { type: 'number', default: 8 },
+    threshold: { type: 'number', default: 2 },
+    lapsToWin: { type: 'number', default: 1 }
+  },
+
+  init: function () {
+    this.currentIndex = 0;
+    this.laps = 0;
+    this.finished = false;
+    const raw = [
+      new THREE.Vector3(0.00, 0.00, 0.00),
+      new THREE.Vector3(-0.10, -2.90, -3.03),
+      new THREE.Vector3(-0.23, -2.84, -6.17),
+      new THREE.Vector3(-0.41, -2.85, -9.20),
+      new THREE.Vector3(-0.59, -2.87, -12.27),
+      new THREE.Vector3(-0.78, -2.89, -15.37),
+      new THREE.Vector3(-1.02, -2.91, -18.40),
+      new THREE.Vector3(-1.29, -2.93, -21.50),
+      new THREE.Vector3(-1.53, -3.00, -24.51),
+      new THREE.Vector3(-1.79, -3.08, -27.58),
+      new THREE.Vector3(-2.10, -3.17, -30.59),
+      new THREE.Vector3(-2.41, -3.27, -33.60),
+      new THREE.Vector3(-2.74, -3.38, -36.65),
+      new THREE.Vector3(-3.07, -3.56, -39.80),
+      new THREE.Vector3(-3.48, -3.75, -42.84),
+      new THREE.Vector3(-4.00, -3.95, -45.87),
+      new THREE.Vector3(-4.74, -4.16, -48.85),
+      new THREE.Vector3(-5.48, -4.40, -51.77),
+      new THREE.Vector3(-6.22, -4.66, -54.73),
+      new THREE.Vector3(-7.00, -4.95, -57.64),
+      new THREE.Vector3(-7.84, -5.30, -60.57),
+      new THREE.Vector3(-8.73, -5.68, -63.53),
+      new THREE.Vector3(-9.67, -6.04, -66.56),
+      new THREE.Vector3(-10.61, -6.40, -69.56),
+      new THREE.Vector3(-11.52, -6.76, -72.43),
+      new THREE.Vector3(-12.45, -7.20, -75.39),
+      new THREE.Vector3(-13.36, -7.62, -78.33),
+      new THREE.Vector3(-14.18, -8.00, -81.22),
+      new THREE.Vector3(-14.82, -8.34, -84.16),
+      new THREE.Vector3(-15.35, -8.67, -87.16),
+      new THREE.Vector3(-15.87, -8.95, -90.19),
+      new THREE.Vector3(-16.39, -9.20, -93.28),
+      new THREE.Vector3(-16.88, -9.44, -96.27),
+      new THREE.Vector3(-17.27, -9.71, -99.38),
+      new THREE.Vector3(-17.62, -9.98, -102.44),
+      new THREE.Vector3(-17.96, -10.25, -105.45),
+      new THREE.Vector3(-18.25, -10.52, -108.46),
+      new THREE.Vector3(-18.50, -10.81, -111.51),
+      new THREE.Vector3(-18.73, -11.10, -114.52),
+      new THREE.Vector3(-18.90, -11.40, -117.52),
+      new THREE.Vector3(-19.07, -11.70, -120.59),
+      new THREE.Vector3(-19.18, -12.01, -123.74),
+      new THREE.Vector3(-19.26, -12.33, -126.75),
+      new THREE.Vector3(-19.34, -12.66, -129.79),
+      new THREE.Vector3(-19.42, -13.02, -132.85),
+      new THREE.Vector3(-19.38, -13.36, -135.85),
+      new THREE.Vector3(-19.33, -13.72, -138.92),
+      new THREE.Vector3(-19.28, -14.08, -141.98),
+      new THREE.Vector3(-19.23, -14.44, -145.07),
+      new THREE.Vector3(-19.18, -14.82, -148.14),
+      new THREE.Vector3(-19.13, -15.18, -151.15),
+      new THREE.Vector3(-19.08, -15.55, -154.17),
+      new THREE.Vector3(-19.03, -15.93, -157.26),
+      new THREE.Vector3(-18.97, -16.31, -160.28),
+      new THREE.Vector3(-18.79, -16.67, -163.40),
+      new THREE.Vector3(-18.56, -17.04, -166.45),
+      new THREE.Vector3(-18.28, -17.43, -169.49),
+      new THREE.Vector3(-17.84, -17.81, -172.54),
+      new THREE.Vector3(-17.33, -18.23, -175.63),
+      new THREE.Vector3(-16.69, -18.65, -178.70),
+      new THREE.Vector3(-15.72, -19.03, -181.88),
+      new THREE.Vector3(-14.68, -19.48, -184.92),
+      new THREE.Vector3(-13.55, -19.87, -187.96),
+      new THREE.Vector3(-12.12, -20.21, -190.64),
+      new THREE.Vector3(-10.38, -20.53, -193.11),
+      new THREE.Vector3(-8.52, -20.84, -195.52),
+      new THREE.Vector3(-6.18, -21.19, -197.42),
+      new THREE.Vector3(-3.81, -21.53, -199.33),
+      new THREE.Vector3(-0.44, -21.89, -201.88),
+      new THREE.Vector3(2.30, -22.42, -203.44),
+      new THREE.Vector3(5.22, -22.80, -204.90),
+      new THREE.Vector3(8.05, -23.12, -206.08),
+      new THREE.Vector3(11.22, -23.39, -207.06),
+      new THREE.Vector3(14.18, -23.70, -207.59),
+      new THREE.Vector3(17.39, -23.99, -207.97),
+      new THREE.Vector3(20.48, -24.22, -208.00),
+      new THREE.Vector3(23.64, -24.44, -207.68),
+      new THREE.Vector3(26.72, -24.62, -207.05),
+      new THREE.Vector3(29.58, -24.82, -205.99),
+      new THREE.Vector3(32.52, -24.98, -204.90),
+      new THREE.Vector3(35.34, -25.13, -203.72),
+      new THREE.Vector3(37.96, -25.30, -202.13),
+      new THREE.Vector3(40.29, -25.47, -200.22),
+      new THREE.Vector3(42.48, -25.68, -197.97),
+      new THREE.Vector3(44.43, -25.87, -195.53),
+      new THREE.Vector3(46.14, -26.06, -192.97),
+      new THREE.Vector3(47.62, -26.28, -190.31),
+      new THREE.Vector3(48.87, -26.48, -187.46),
+      new THREE.Vector3(49.92, -26.66, -184.62),
+      new THREE.Vector3(50.83, -26.84, -181.71),
+      new THREE.Vector3(51.59, -27.03, -178.74),
+      new THREE.Vector3(52.25, -27.20, -175.77),
+      new THREE.Vector3(52.35, -27.38, -172.70),
+      new THREE.Vector3(52.16, -27.55, -169.64),
+      new THREE.Vector3(51.66, -27.75, -166.61),
+      new THREE.Vector3(50.85, -27.92, -163.67),
+      new THREE.Vector3(49.83, -28.10, -160.84),
+      new THREE.Vector3(48.52, -28.27, -158.11),
+      new THREE.Vector3(46.98, -28.45, -155.52),
+      new THREE.Vector3(45.20, -28.66, -152.95),
+      new THREE.Vector3(43.30, -28.86, -150.58),
+      new THREE.Vector3(41.28, -29.07, -148.31),
+      new THREE.Vector3(38.84, -29.26, -146.32),
+      new THREE.Vector3(36.13, -29.46, -144.87),
+      new THREE.Vector3(33.31, -29.67, -143.38),
+      new THREE.Vector3(30.61, -29.88, -142.03),
+      new THREE.Vector3(27.47, -30.11, -140.84),
+      new THREE.Vector3(24.40, -30.33, -140.27),
+      new THREE.Vector3(21.37, -30.57, -139.77),
+      new THREE.Vector3(18.36, -30.80, -139.34),
+      new THREE.Vector3(15.33, -31.03, -139.43),
+      new THREE.Vector3(12.09, -31.27, -139.64),
+      new THREE.Vector3(9.05, -31.52, -139.84),
+      new THREE.Vector3(5.91, -31.72, -140.22),
+      new THREE.Vector3(2.89, -31.90, -140.93),
+      new THREE.Vector3(0.07, -32.08, -141.97),
+      new THREE.Vector3(-2.74, -32.26, -143.03),
+      new THREE.Vector3(-5.49, -32.44, -144.29),
+      new THREE.Vector3(-8.15, -32.64, -145.79),
+      new THREE.Vector3(-10.78, -32.81, -147.42),
+      new THREE.Vector3(-13.30, -32.97, -149.19),
+      new THREE.Vector3(-15.77, -33.13, -151.03),
+      new THREE.Vector3(-18.39, -33.26, -152.99),
+      new THREE.Vector3(-20.79, -33.38, -155.01),
+      new THREE.Vector3(-23.18, -33.50, -157.12),
+      new THREE.Vector3(-25.41, -33.62, -159.23),
+      new THREE.Vector3(-27.65, -33.74, -161.34),
+      new THREE.Vector3(-29.86, -33.86, -163.40),
+      new THREE.Vector3(-32.12, -33.98, -165.47),
+      new THREE.Vector3(-34.37, -34.11, -167.51),
+      new THREE.Vector3(-36.76, -34.24, -169.49),
+      new THREE.Vector3(-39.22, -34.37, -171.21),
+      new THREE.Vector3(-41.36, -34.52, -173.41),
+      new THREE.Vector3(-43.82, -34.68, -175.20),
+      new THREE.Vector3(-46.23, -34.84, -177.07),
+      new THREE.Vector3(-48.88, -35.00, -178.51),
+      new THREE.Vector3(-51.49, -35.18, -180.13),
+      new THREE.Vector3(-54.44, -35.32, -180.82),
+      new THREE.Vector3(-57.50, -35.48, -181.30),
+      new THREE.Vector3(-60.52, -35.64, -181.69),
+      new THREE.Vector3(-63.51, -35.80, -182.61),
+      new THREE.Vector3(-66.42, -35.98, -183.44),
+      new THREE.Vector3(-69.45, -36.11, -183.59),
+      new THREE.Vector3(-72.49, -36.25, -183.80),
+      new THREE.Vector3(-75.43, -36.40, -182.85),
+      new THREE.Vector3(-78.27, -36.54, -181.54),
+      new THREE.Vector3(-81.28, -36.68, -180.66),
+      new THREE.Vector3(-84.02, -36.83, -179.41),
+      new THREE.Vector3(-86.88, -36.97, -178.25),
+      new THREE.Vector3(-89.26, -37.13, -176.28),
+      new THREE.Vector3(-91.96, -37.26, -174.81),
+      new THREE.Vector3(-94.49, -37.38, -173.03),
+      new THREE.Vector3(-96.88, -37.52, -170.98),
+      new THREE.Vector3(-99.05, -37.64, -168.71),
+      new THREE.Vector3(-101.08, -37.75, -166.46),
+      new THREE.Vector3(-102.90, -37.87, -163.84),
+      new THREE.Vector3(-104.26, -37.99, -161.10),
+      new THREE.Vector3(-105.14, -38.12, -158.18),
+      new THREE.Vector3(-105.41, -38.24, -155.14),
+      new THREE.Vector3(-105.42, -38.35, -152.07),
+      new THREE.Vector3(-105.82, -38.44, -149.01),
+      new THREE.Vector3(-106.34, -38.51, -146.02),
+      new THREE.Vector3(-106.99, -38.58, -143.05),
+      new THREE.Vector3(-106.63, -38.66, -139.99),
+      new THREE.Vector3(-105.79, -38.71, -137.09),
+      new THREE.Vector3(-104.79, -38.77, -134.15),
+      new THREE.Vector3(-103.69, -38.79, -131.32),
+      new THREE.Vector3(-102.36, -38.79, -128.58),
+      new THREE.Vector3(-100.87, -38.79, -125.86),
+      new THREE.Vector3(-99.30, -38.79, -123.25),
+      new THREE.Vector3(-97.59, -38.79, -120.79),
+      new THREE.Vector3(-95.72, -38.79, -118.28),
+      new THREE.Vector3(-93.86, -38.79, -115.85),
+      new THREE.Vector3(-91.79, -38.79, -113.60),
+      new THREE.Vector3(-89.48, -38.79, -111.65),
+      new THREE.Vector3(-86.89, -38.79, -110.02),
+      new THREE.Vector3(-84.20, -38.79, -108.53),
+      new THREE.Vector3(-81.40, -38.85, -107.23),
+      new THREE.Vector3(-78.38, -38.94, -106.08),
+      new THREE.Vector3(-75.42, -39.03, -104.99),
+      new THREE.Vector3(-72.51, -39.10, -104.10),
+      new THREE.Vector3(-69.50, -39.16, -103.50),
+      new THREE.Vector3(-66.43, -39.27, -103.04),
+      new THREE.Vector3(-63.30, -39.39, -102.77),
+      new THREE.Vector3(-60.27, -39.51, -102.58),
+      new THREE.Vector3(-57.22, -39.64, -102.45),
+      new THREE.Vector3(-54.15, -39.79, -102.39),
+      new THREE.Vector3(-51.09, -39.93, -102.33),
+      new THREE.Vector3(-48.07, -40.06, -102.27),
+      new THREE.Vector3(-44.98, -40.21, -102.21),
+      new THREE.Vector3(-41.93, -40.35, -102.16),
+      new THREE.Vector3(-38.87, -40.52, -102.10),
+      new THREE.Vector3(-35.80, -40.69, -102.04),
+      new THREE.Vector3(-32.75, -40.87, -101.98),
+      new THREE.Vector3(-29.72, -41.10, -101.93),
+      new THREE.Vector3(-26.71, -41.34, -101.93),
+      new THREE.Vector3(-23.57, -41.61, -101.97),
+      new THREE.Vector3(-20.45, -42.06, -102.01),
+      new THREE.Vector3(-17.41, -42.50, -102.04),
+      new THREE.Vector3(-14.37, -43.02, -102.07),
+      new THREE.Vector3(-11.28, -43.77, -102.09),
+      new THREE.Vector3(-8.24, -44.48, -102.12),
+      new THREE.Vector3(-5.24, -45.36, -102.14),
+      new THREE.Vector3(-2.11, -46.45, -102.17),
+      new THREE.Vector3(1.03, -47.65, -102.21),
+      new THREE.Vector3(4.19, -48.64, -102.24),
+      new THREE.Vector3(7.24, -49.40, -102.31),
+      new THREE.Vector3(10.28, -49.80, -102.39),
+      new THREE.Vector3(13.34, -49.99, -102.45),
+      new THREE.Vector3(16.40, -49.94, -102.50),
+      new THREE.Vector3(19.44, -49.42, -102.52),
+      new THREE.Vector3(22.51, -48.67, -102.55),
+      new THREE.Vector3(25.57, -47.71, -102.57),
+      new THREE.Vector3(28.58, -46.68, -102.59),
+      new THREE.Vector3(31.60, -45.61, -102.61),
+      new THREE.Vector3(34.63, -44.55, -102.63),
+      new THREE.Vector3(37.68, -43.62, -102.65),
+      new THREE.Vector3(40.79, -42.80, -102.67),
+      new THREE.Vector3(43.80, -42.17, -102.68),
+      new THREE.Vector3(46.86, -41.75, -102.64),
+      new THREE.Vector3(49.86, -41.51, -102.58),
+      new THREE.Vector3(52.88, -41.37, -102.49),
+      new THREE.Vector3(55.93, -41.23, -102.53),
+      new THREE.Vector3(58.91, -41.19, -103.21),
+      new THREE.Vector3(61.88, -41.19, -103.92),
+      new THREE.Vector3(64.85, -41.19, -104.63),
+      new THREE.Vector3(67.79, -41.19, -105.42),
+      new THREE.Vector3(70.64, -41.19, -106.42),
+      new THREE.Vector3(73.48, -41.19, -107.52),
+      new THREE.Vector3(76.24, -41.19, -108.75),
+      new THREE.Vector3(78.93, -41.19, -110.12),
+      new THREE.Vector3(81.53, -41.19, -111.64),
+      new THREE.Vector3(84.10, -41.19, -113.25),
+      new THREE.Vector3(86.61, -41.19, -114.93),
+      new THREE.Vector3(89.05, -41.19, -116.72),
+      new THREE.Vector3(91.53, -41.19, -118.54),
+      new THREE.Vector3(93.99, -41.19, -120.35),
+      new THREE.Vector3(96.48, -41.19, -122.17),
+      new THREE.Vector3(98.99, -41.19, -124.04),
+      new THREE.Vector3(101.42, -41.19, -125.93),
+      new THREE.Vector3(103.80, -41.19, -127.78),
+      new THREE.Vector3(106.18, -41.19, -129.62),
+      new THREE.Vector3(108.58, -41.19, -131.46),
+      new THREE.Vector3(110.99, -41.19, -133.28),
+      new THREE.Vector3(113.48, -41.19, -135.11),
+      new THREE.Vector3(115.98, -41.19, -136.91),
+      new THREE.Vector3(118.42, -41.19, -138.66),
+      new THREE.Vector3(121.01, -41.19, -140.43),
+      new THREE.Vector3(123.64, -41.19, -142.01),
+      new THREE.Vector3(126.28, -41.19, -143.47),
+      new THREE.Vector3(129.11, -41.19, -144.82),
+      new THREE.Vector3(131.97, -41.19, -145.93),
+      new THREE.Vector3(134.85, -41.19, -146.90),
+      new THREE.Vector3(137.37, -41.19, -148.65),
+      new THREE.Vector3(140.38, -41.19, -149.45),
+      new THREE.Vector3(143.39, -41.19, -149.21),
+      new THREE.Vector3(146.58, -41.19, -149.68),
+      new THREE.Vector3(149.58, -41.19, -149.32),
+      new THREE.Vector3(152.57, -41.19, -148.97),
+      new THREE.Vector3(155.69, -41.19, -148.62),
+      new THREE.Vector3(158.58, -41.19, -147.74),
+      new THREE.Vector3(161.19, -41.19, -146.15),
+      new THREE.Vector3(163.69, -41.19, -144.49),
+      new THREE.Vector3(165.14, -41.19, -141.80),
+      new THREE.Vector3(166.68, -41.19, -139.17),
+      new THREE.Vector3(167.39, -41.19, -136.15),
+      new THREE.Vector3(168.07, -41.19, -133.18),
+      new THREE.Vector3(169.76, -41.19, -130.52),
+      new THREE.Vector3(170.14, -41.19, -127.54),
+      new THREE.Vector3(170.35, -41.19, -124.41),
+      new THREE.Vector3(169.40, -41.19, -121.46),
+      new THREE.Vector3(168.71, -41.19, -118.39),
+      new THREE.Vector3(167.14, -41.19, -115.77),
+      new THREE.Vector3(165.20, -41.19, -113.42),
+      new THREE.Vector3(163.07, -41.19, -111.28),
+      new THREE.Vector3(160.84, -41.19, -109.20),
+      new THREE.Vector3(158.57, -41.19, -107.21),
+      new THREE.Vector3(156.28, -41.19, -105.22),
+      new THREE.Vector3(153.90, -41.19, -103.27),
+      new THREE.Vector3(151.44, -41.19, -101.28),
+      new THREE.Vector3(149.00, -41.19, -99.27),
+      new THREE.Vector3(146.53, -41.19, -97.27),
+      new THREE.Vector3(144.02, -41.19, -95.33),
+      new THREE.Vector3(141.57, -41.19, -93.55),
+      new THREE.Vector3(139.09, -41.19, -91.71),
+      new THREE.Vector3(136.54, -41.19, -89.89),
+      new THREE.Vector3(134.06, -41.19, -88.11),
+      new THREE.Vector3(131.57, -41.19, -86.32),
+      new THREE.Vector3(129.09, -41.19, -84.54),
+      new THREE.Vector3(126.56, -41.19, -82.72),
+      new THREE.Vector3(124.09, -41.19, -80.95),
+      new THREE.Vector3(121.49, -41.21, -79.09),
+      new THREE.Vector3(118.99, -41.27, -77.29),
+      new THREE.Vector3(116.49, -41.32, -75.50),
+      new THREE.Vector3(114.06, -41.38, -73.73),
+      new THREE.Vector3(111.63, -41.43, -71.83),
+      new THREE.Vector3(109.27, -41.49, -69.93),
+      new THREE.Vector3(106.82, -41.55, -67.94),
+      new THREE.Vector3(104.48, -41.62, -65.95),
+      new THREE.Vector3(102.15, -41.68, -63.89),
+      new THREE.Vector3(99.95, -41.81, -61.76),
+      new THREE.Vector3(97.92, -41.96, -59.48),
+      new THREE.Vector3(96.42, -42.11, -56.76),
+      new THREE.Vector3(94.68, -42.27, -54.16),
+      new THREE.Vector3(92.45, -42.42, -51.97),
+      new THREE.Vector3(90.88, -42.56, -49.27),
+      new THREE.Vector3(89.68, -42.70, -46.37),
+      new THREE.Vector3(88.73, -42.80, -43.37),
+      new THREE.Vector3(88.05, -42.88, -40.40),
+      new THREE.Vector3(87.48, -42.97, -37.42),
+      new THREE.Vector3(86.99, -43.14, -34.37),
+      new THREE.Vector3(86.66, -43.34, -31.33),
+      new THREE.Vector3(86.38, -43.54, -28.28),
+      new THREE.Vector3(86.10, -43.73, -25.22),
+      new THREE.Vector3(85.83, -43.89, -22.23),
+      new THREE.Vector3(85.62, -44.03, -19.17),
+      new THREE.Vector3(85.54, -44.19, -16.02),
+      new THREE.Vector3(85.49, -44.35, -12.99),
+      new THREE.Vector3(85.48, -44.45, -9.76),
+      new THREE.Vector3(85.49, -44.53, -6.55),
+      new THREE.Vector3(85.52, -44.62, -3.23),
+      new THREE.Vector3(85.55, -44.70, -0.17),
+      new THREE.Vector3(85.58, -44.78, 2.89),
+      new THREE.Vector3(85.61, -44.79, 6.08),
+      new THREE.Vector3(85.56, -44.79, 9.08),
+      new THREE.Vector3(85.46, -44.79, 12.10),
+      new THREE.Vector3(85.26, -44.83, 15.30),
+      new THREE.Vector3(84.78, -44.89, 18.51),
+      new THREE.Vector3(84.00, -44.95, 21.54),
+      new THREE.Vector3(82.90, -45.02, 24.39),
+      new THREE.Vector3(81.70, -45.13, 27.30),
+      new THREE.Vector3(81.53, -45.23, 30.36),
+      new THREE.Vector3(79.77, -45.36, 32.89),
+      new THREE.Vector3(77.32, -45.52, 34.85),
+      new THREE.Vector3(74.93, -45.69, 36.73),
+      new THREE.Vector3(72.34, -45.89, 38.53),
+      new THREE.Vector3(70.11, -46.05, 40.62),
+      new THREE.Vector3(67.64, -46.23, 42.43),
+      new THREE.Vector3(64.68, -46.41, 43.11),
+      new THREE.Vector3(61.59, -46.56, 43.09),
+      new THREE.Vector3(58.54, -46.73, 42.44),
+      new THREE.Vector3(55.55, -46.87, 41.76),
+      new THREE.Vector3(52.67, -47.02, 40.91),
+      new THREE.Vector3(49.92, -47.19, 39.60),
+      new THREE.Vector3(47.50, -47.38, 37.73),
+      new THREE.Vector3(45.36, -47.58, 35.60),
+      new THREE.Vector3(42.80, -47.77, 33.84),
+      new THREE.Vector3(40.79, -47.96, 31.55),
+      new THREE.Vector3(39.32, -48.16, 28.91),
+      new THREE.Vector3(38.58, -48.36, 25.99),
+      new THREE.Vector3(38.16, -48.52, 22.89),
+      new THREE.Vector3(37.86, -48.70, 19.84),
+      new THREE.Vector3(37.64, -48.86, 16.70),
+      new THREE.Vector3(37.66, -49.04, 13.64),
+      new THREE.Vector3(38.18, -49.22, 10.55),
+      new THREE.Vector3(39.28, -49.39, 7.66),
+      new THREE.Vector3(40.59, -49.56, 4.95),
+      new THREE.Vector3(42.38, -49.71, 2.49),
+      new THREE.Vector3(44.66, -49.88, 0.18),
+      new THREE.Vector3(47.13, -50.04, -1.71),
+      new THREE.Vector3(49.84, -50.21, -3.10),
+      new THREE.Vector3(52.68, -50.38, -4.47),
+      new THREE.Vector3(55.65, -50.54, -5.26),
+      new THREE.Vector3(58.67, -50.71, -5.59),
+      new THREE.Vector3(61.97, -50.87, -5.69),
+      new THREE.Vector3(65.01, -51.04, -5.51),
+      new THREE.Vector3(68.13, -51.20, -4.79),
+      new THREE.Vector3(71.02, -51.38, -3.64),
+      new THREE.Vector3(73.71, -51.56, -2.10),
+      new THREE.Vector3(76.20, -51.77, -0.10),
+      new THREE.Vector3(78.41, -51.95, 1.98),
+      new THREE.Vector3(80.50, -52.15, 4.32),
+      new THREE.Vector3(82.23, -52.35, 6.88),
+      new THREE.Vector3(83.30, -52.54, 9.74),
+      new THREE.Vector3(84.05, -52.75, 12.76),
+      new THREE.Vector3(84.55, -52.86, 15.80),
+      new THREE.Vector3(84.82, -52.94, 18.80),
+      new THREE.Vector3(84.81, -53.00, 21.83),
+      new THREE.Vector3(84.53, -53.03, 24.89),
+      new THREE.Vector3(84.05, -53.06, 27.91),
+      new THREE.Vector3(83.40, -53.09, 30.95),
+      new THREE.Vector3(82.75, -53.12, 33.93),
+      new THREE.Vector3(81.84, -53.15, 36.81),
+      new THREE.Vector3(80.78, -53.18, 39.62),
+      new THREE.Vector3(79.69, -53.32, 42.51),
+      new THREE.Vector3(78.50, -53.47, 45.29),
+      new THREE.Vector3(77.23, -53.65, 48.13),
+      new THREE.Vector3(75.99, -53.75, 50.89),
+      new THREE.Vector3(74.70, -53.83, 53.78),
+      new THREE.Vector3(73.37, -53.91, 56.62),
+      new THREE.Vector3(72.02, -53.96, 59.35),
+      new THREE.Vector3(70.68, -53.98, 62.04),
+      new THREE.Vector3(69.34, -54.01, 64.76),
+      new THREE.Vector3(67.98, -54.02, 67.45),
+      new THREE.Vector3(66.58, -53.87, 70.11),
+      new THREE.Vector3(65.21, -53.71, 72.81),
+      new THREE.Vector3(63.90, -53.54, 75.64),
+      new THREE.Vector3(62.79, -53.25, 78.50),
+      new THREE.Vector3(61.82, -52.92, 81.35),
+      new THREE.Vector3(60.93, -52.39, 84.32),
+      new THREE.Vector3(60.11, -51.80, 87.32),
+      new THREE.Vector3(59.32, -51.16, 90.23),
+      new THREE.Vector3(58.65, -50.38, 93.16),
+      new THREE.Vector3(58.06, -49.54, 96.13),
+      new THREE.Vector3(57.46, -48.54, 99.18),
+      new THREE.Vector3(56.87, -47.55, 102.13),
+      new THREE.Vector3(56.27, -46.45, 105.16),
+      new THREE.Vector3(55.69, -45.35, 108.13),
+      new THREE.Vector3(55.08, -44.16, 111.12),
+      new THREE.Vector3(54.42, -42.91, 114.09),
+      new THREE.Vector3(53.72, -41.72, 117.07),
+      new THREE.Vector3(53.02, -40.56, 120.02),
+      new THREE.Vector3(52.30, -39.39, 122.94),
+      new THREE.Vector3(51.43, -38.47, 125.92),
+      new THREE.Vector3(50.24, -37.66, 128.68),
+      new THREE.Vector3(48.87, -36.83, 131.41),
+      new THREE.Vector3(47.08, -36.24, 134.14),
+      new THREE.Vector3(45.20, -35.69, 136.71),
+      new THREE.Vector3(43.16, -35.23, 139.18),
+      new THREE.Vector3(40.91, -34.80, 141.27),
+      new THREE.Vector3(38.71, -34.40, 143.32),
+      new THREE.Vector3(36.44, -33.99, 145.31),
+      new THREE.Vector3(34.05, -33.60, 147.15),
+      new THREE.Vector3(31.46, -33.25, 148.93),
+      new THREE.Vector3(28.72, -32.91, 150.75),
+      new THREE.Vector3(26.16, -32.58, 152.44),
+      new THREE.Vector3(23.57, -32.25, 154.06),
+      new THREE.Vector3(20.88, -31.93, 155.68),
+      new THREE.Vector3(18.17, -31.62, 157.12),
+      new THREE.Vector3(15.40, -31.33, 158.47),
+      new THREE.Vector3(12.67, -31.04, 159.78),
+      new THREE.Vector3(9.84, -30.77, 161.14),
+      new THREE.Vector3(6.97, -30.49, 162.52),
+      new THREE.Vector3(4.25, -30.23, 163.82),
+      new THREE.Vector3(1.28, -29.98, 165.25),
+      new THREE.Vector3(-1.57, -29.73, 166.62),
+      new THREE.Vector3(-4.34, -29.49, 167.95),
+      new THREE.Vector3(-7.27, -29.24, 169.35),
+      new THREE.Vector3(-10.12, -29.03, 170.78),
+      new THREE.Vector3(-12.79, -28.84, 172.21),
+      new THREE.Vector3(-15.43, -28.65, 173.68),
+      new THREE.Vector3(-18.12, -28.46, 175.25),
+      new THREE.Vector3(-20.84, -28.33, 176.85),
+      new THREE.Vector3(-23.51, -28.22, 178.38),
+      new THREE.Vector3(-26.24, -28.13, 179.94),
+      new THREE.Vector3(-28.97, -28.03, 181.50),
+      new THREE.Vector3(-31.64, -27.99, 183.03),
+      new THREE.Vector3(-34.38, -27.99, 184.61),
+      new THREE.Vector3(-37.04, -27.99, 186.22),
+      new THREE.Vector3(-39.61, -27.99, 187.84),
+      new THREE.Vector3(-42.09, -28.02, 189.60),
+      new THREE.Vector3(-44.41, -28.11, 191.65),
+      new THREE.Vector3(-46.52, -28.19, 193.81),
+      new THREE.Vector3(-48.64, -28.27, 195.98),
+      new THREE.Vector3(-50.86, -28.37, 198.25),
+      new THREE.Vector3(-52.97, -28.39, 200.44),
+      new THREE.Vector3(-54.90, -28.39, 202.79),
+      new THREE.Vector3(-56.55, -28.39, 205.31),
+      new THREE.Vector3(-58.12, -28.39, 207.87),
+      new THREE.Vector3(-59.56, -28.39, 210.54),
+      new THREE.Vector3(-60.92, -28.39, 213.29),
+      new THREE.Vector3(-62.06, -28.39, 216.13),
+      new THREE.Vector3(-62.79, -28.39, 219.10),
+      new THREE.Vector3(-63.41, -28.39, 222.16),
+      new THREE.Vector3(-64.00, -28.39, 225.13),
+      new THREE.Vector3(-64.42, -28.39, 228.24),
+      new THREE.Vector3(-64.46, -28.39, 231.36),
+      new THREE.Vector3(-64.20, -28.39, 234.37),
+      new THREE.Vector3(-63.66, -28.39, 237.37),
+      new THREE.Vector3(-63.03, -28.39, 240.42),
+      new THREE.Vector3(-62.08, -28.39, 243.42),
+      new THREE.Vector3(-60.86, -28.39, 246.23),
+      new THREE.Vector3(-59.49, -28.39, 248.90),
+      new THREE.Vector3(-58.01, -28.39, 251.54),
+      new THREE.Vector3(-56.28, -28.39, 254.09),
+      new THREE.Vector3(-54.23, -28.39, 256.29),
+      new THREE.Vector3(-51.83, -28.39, 258.20),
+      new THREE.Vector3(-49.14, -28.39, 259.98),
+      new THREE.Vector3(-46.29, -28.39, 261.50),
+      new THREE.Vector3(-43.30, -28.39, 262.56),
+      new THREE.Vector3(-40.21, -28.39, 263.43),
+      new THREE.Vector3(-37.19, -28.39, 264.16),
+      new THREE.Vector3(-34.03, -28.39, 264.45),
+      new THREE.Vector3(-30.93, -28.39, 264.50),
+      new THREE.Vector3(-27.86, -28.39, 264.31),
+      new THREE.Vector3(-24.77, -28.39, 263.71),
+      new THREE.Vector3(-21.93, -28.39, 262.74),
+      new THREE.Vector3(-19.18, -28.39, 261.20),
+      new THREE.Vector3(-16.79, -28.39, 259.30),
+      new THREE.Vector3(-14.34, -28.39, 257.19),
+      new THREE.Vector3(-12.07, -28.39, 255.19),
+      new THREE.Vector3(-9.80, -28.39, 252.93),
+      new THREE.Vector3(-7.81, -28.39, 250.59),
+      new THREE.Vector3(-6.14, -28.39, 248.03),
+      new THREE.Vector3(-4.76, -28.39, 245.10),
+      new THREE.Vector3(-3.65, -28.39, 242.24),
+      new THREE.Vector3(-2.69, -28.39, 239.15),
+      new THREE.Vector3(-1.83, -28.39, 235.98),
+      new THREE.Vector3(-1.12, -28.40, 233.02),
+      new THREE.Vector3(-0.53, -28.48, 229.94),
+      new THREE.Vector3(-0.19, -28.57, 226.89),
+      new THREE.Vector3(0.02, -28.71, 223.88),
+      new THREE.Vector3(0.18, -28.91, 220.63),
+      new THREE.Vector3(0.29, -29.11, 217.54),
+      new THREE.Vector3(0.29, -29.35, 214.50),
+      new THREE.Vector3(0.27, -29.65, 211.48),
+      new THREE.Vector3(0.25, -29.94, 208.44),
+      new THREE.Vector3(0.22, -30.28, 205.23),
+      new THREE.Vector3(0.18, -30.63, 202.18),
+      new THREE.Vector3(0.12, -30.99, 199.13),
+      new THREE.Vector3(0.04, -31.38, 195.95),
+      new THREE.Vector3(-0.05, -31.83, 192.78),
+      new THREE.Vector3(-0.15, -32.30, 189.46),
+      new THREE.Vector3(-0.21, -32.77, 186.42),
+      new THREE.Vector3(-0.24, -33.27, 183.15),
+      new THREE.Vector3(-0.28, -33.78, 180.08),
+      new THREE.Vector3(-0.31, -34.31, 177.00),
+      new THREE.Vector3(-0.35, -34.87, 173.88),
+      new THREE.Vector3(-0.39, -35.46, 170.64),
+      new THREE.Vector3(-0.44, -36.07, 167.61),
+      new THREE.Vector3(-0.49, -36.67, 164.51),
+      new THREE.Vector3(-0.53, -37.30, 161.35),
+      new THREE.Vector3(-0.55, -38.06, 158.30),
+      new THREE.Vector3(-0.58, -38.81, 155.21),
+      new THREE.Vector3(-0.60, -39.50, 152.17),
+      new THREE.Vector3(-0.62, -40.25, 149.03),
+      new THREE.Vector3(-0.64, -40.97, 145.98),
+      new THREE.Vector3(-0.66, -41.70, 142.90),
+      new THREE.Vector3(-0.67, -42.41, 139.87),
+      new THREE.Vector3(-0.66, -43.12, 136.87),
+      new THREE.Vector3(-0.65, -43.82, 133.84),
+      new THREE.Vector3(-0.63, -44.47, 130.75),
+      new THREE.Vector3(-0.62, -45.07, 127.74),
+      new THREE.Vector3(-0.60, -45.65, 124.68),
+      new THREE.Vector3(-0.59, -46.08, 121.67),
+      new THREE.Vector3(-0.60, -46.35, 118.54),
+      new THREE.Vector3(-0.66, -46.39, 115.35),
+      new THREE.Vector3(-0.71, -46.27, 112.23),
+      new THREE.Vector3(-0.74, -46.00, 109.03),
+      new THREE.Vector3(-0.77, -45.48, 105.87),
+      new THREE.Vector3(-0.80, -44.85, 102.85),
+      new THREE.Vector3(-0.82, -44.04, 99.76),
+      new THREE.Vector3(-0.85, -43.02, 96.69),
+      new THREE.Vector3(-0.88, -41.89, 93.62),
+      new THREE.Vector3(-0.91, -40.63, 90.44),
+      new THREE.Vector3(-0.93, -39.11, 87.32),
+      new THREE.Vector3(-0.88, -37.50, 84.28),
+      new THREE.Vector3(-0.82, -35.72, 81.25),
+      new THREE.Vector3(-0.75, -33.60, 78.21),
+      new THREE.Vector3(-0.68, -31.55, 75.19),
+      new THREE.Vector3(-0.61, -29.31, 72.16),
+      new THREE.Vector3(-0.53, -26.95, 69.02),
+      new THREE.Vector3(-0.45, -24.61, 65.85),
+      new THREE.Vector3(-0.38, -22.16, 62.83),
+      new THREE.Vector3(-0.30, -19.90, 59.80),
+      new THREE.Vector3(-0.22, -17.58, 56.73),
+      new THREE.Vector3(-0.15, -15.45, 53.66),
+      new THREE.Vector3(-0.07, -13.56, 50.59),
+      new THREE.Vector3(0.00, -11.89, 47.55),
+      new THREE.Vector3(0.05, -10.54, 44.54),
+      new THREE.Vector3(0.06, -9.35, 41.46),
+      new THREE.Vector3(0.03, -8.25, 38.42),
+      new THREE.Vector3(-0.01, -7.30, 35.27),
+      new THREE.Vector3(-0.05, -6.50, 32.20),
+      new THREE.Vector3(-0.11, -5.83, 29.07),
+      new THREE.Vector3(-0.16, -5.31, 25.95),
+      new THREE.Vector3(-0.21, -4.85, 22.89),
+      new THREE.Vector3(-0.27, -4.40, 19.78),
+      new THREE.Vector3(-0.32, -4.02, 16.67),
+      new THREE.Vector3(-0.38, -3.71, 13.66),
+      new THREE.Vector3(-0.43, -3.45, 10.63),
+      new THREE.Vector3(-0.46, -3.32, 7.61),
+      new THREE.Vector3(-0.47, -3.20, 4.53),
+      new THREE.Vector3(-0.48, -3.07, 1.48),
+      new THREE.Vector3(-0.49, -2.95, -1.59),
+      new THREE.Vector3(-0.50, -2.84, -4.78),
+      new THREE.Vector3(-0.51, -2.85, -8.06),
+      new THREE.Vector3(-0.52, -2.86, -11.11),
+      new THREE.Vector3(-0.53, -2.89, -14.14)
+    ];
+    const offset = new THREE.Vector3(8.5, 53.5, 0);
+    this.waypoints = raw.map(v => new THREE.Vector3(
+    -v.x + offset.x,
+     v.y + offset.y,
+    -v.z + offset.z
+  ));
+  },
+
+  tick: function (time, delta) {
+    if (this.finished || this.waypoints.length < 2) return;
+
+    const pos    = this.el.object3D.position;
+    const target = this.waypoints[this.currentIndex];
+    const dx     = target.x - pos.x;
+    const dz     = target.z - pos.z;
+    const dist   = Math.sqrt(dx * dx + dz * dz);
+
+    if (dist < this.data.threshold) {
+      this.currentIndex++;
+      if (this.currentIndex >= this.waypoints.length) {
+        this.currentIndex = 0;
+        this.laps++;
+        this.el.emit('lap-complete', { laps: this.laps });
+
+        if (this.laps >= this.data.lapsToWin) {
+          this.finished = true;
+          this.el.emit('race-finished', { winner: 'ai' });
+        }
+      }
+      return;
+    }
+
+    const step = this.data.speed * delta / 1000;
+    pos.x += (dx / dist) * step;
+    pos.z += (dz / dist) * step;
+
+    // Orientar en Y hacia el siguiente waypoint (XZ)
+    this.el.object3D.rotation.y = Math.atan2(dx, dz);
+  }
+});
+
+
+  AFRAME.registerComponent('race-manager', {
+    schema: {
+      playerCar: { type: 'selector' },  // entidad gltf del coche del jugador
+      aiCar:{ type: 'selector' },  // entidad gltf del coche AI
+      aiRig: { type: 'selector' },  // el rig con waypoint-follower
+      finishPos: { type: 'vec3',   default: { x: 8.5, y: 53.5, z: 0 } },
+      finishRadius:{ type: 'number', default: 3 },
+      lapsToWin: { type: 'number', default: 1 }
+    },
+
+    init: function () {
+        this.raceOver = false;
+        this.playerLaps = 0;
+        this.playerNearLine = true;
+        this._playerWorld = new THREE.Vector3();
+        this._finishVec = new THREE.Vector3();
+        this._metaEl = null;
+
+        const assignMeta = () => {
+          this._metaEl = document.querySelector('#meta');
+          console.log('meta asignado:', this._metaEl);
+        };
+
+        if (this.el.sceneEl.hasLoaded) {
+          assignMeta(); // escena ya cargada
+        } else {
+          this.el.sceneEl.addEventListener('loaded', assignMeta);
+        }
+
+        if (this.data.aiRig) {
+          this.data.aiRig.addEventListener('race-finished', () => {
+            if (!this.raceOver) this.endRace('ai');
+          });
+        }
+      },
+
+      tick: function () {
+        if (this.raceOver || !this.data.playerCar || !this._metaEl) return;
+
+        this.data.playerCar.object3D.getWorldPosition(this._playerWorld);
+        this._metaEl.object3D.getWorldPosition(this._finishVec);
+
+        const dist = this._playerWorld.distanceTo(this._finishVec);
+        console.log('dist:', dist.toFixed(2));
+
+        if (dist < this.data.finishRadius) {
+          if (!this.playerNearLine) {
+            this.playerNearLine = true;
+            this.playerLaps++;
+            if (this.playerLaps >= this.data.lapsToWin) {
+              this.endRace('player');
+            }
+          }
+        } else {
+          this.playerNearLine = false;
+        }
+      },
+    endRace: function (winner) {
+      this.raceOver = true;
+
+      if (this.data.aiRig && this.data.aiRig.components['waypoint-follower']) {
+        this.data.aiRig.components['waypoint-follower'].finished = true;
+      }
+
+      const winnerMesh = winner === 'player' ? this.data.playerCar : this.data.aiCar;
+      const loserMesh  = winner === 'player' ? this.data.aiCar     : this.data.playerCar;
+
+      this.applyWinEffect(winnerMesh);
+      this.applyLoseEffect(loserMesh);
+
+      // ← nuevo
+      const el = document.getElementById('race-result');
+      if (el) {
+        el.textContent = winner === 'player' ? '🏆 ¡Has ganado!' : '💀 Has perdido';
+        el.style.display = 'block';
+      }
+
+      console.log('Ganador:', winner);
+    },
+
+    applyWinEffect: function (el) {
+      const mesh = el.getObject3D('mesh');
+      if (!mesh) return;
+      mesh.traverse(node => {
+        if (!node.isMesh) return;
+        const mats = Array.isArray(node.material) ? node.material : [node.material];
+        mats.forEach(mat => {
+          mat.emissive          = new THREE.Color(1, 0.85, 0.1);
+          mat.emissiveIntensity = 1.2;
+          mat.needsUpdate       = true;
+        });
+      });
+    },
+
+    applyLoseEffect: function (el) {
+      const mesh = el.getObject3D('mesh');
+      if (!mesh) return;
+      mesh.traverse(node => {
+        if (!node.isMesh) return;
+        const mats = Array.isArray(node.material) ? node.material : [node.material];
+        mats.forEach(mat => {
+          if (mat.color) {
+            const lum = mat.color.r * 0.299 + mat.color.g * 0.587 + mat.color.b * 0.114;
+            mat.color.setRGB(lum * 0.4, lum * 0.4, lum * 0.4);
+          }
+          mat.emissiveIntensity = 0;
+          mat.needsUpdate       = true;
+        });
+      });
+    }
+  });
+    </script>
+  </head>
+    
+  <body>
+    <div id="race-result" style="
+    display: none;
+    position: fixed;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 4rem;
+    font-weight: bold;
+    color: white;
+    text-shadow: 0 0 20px black;
+    pointer-events: none;
+    z-index: 999;
+  "></div>
+    <a-scene>
+
+      <!-- Assets -->
+      <a-assets>
+        <img id="sky" src="./Assets/Universo.png">
+        <img id="rueda" src="./Assets/llanta.jpeg">
+        <a-asset-item id="sun" src="./Assets/sun/scene.gltf"></a-asset-item>
+        <a-asset-item id="mercury" src="./Assets/mercurio/scene.gltf"></a-asset-item>
+        <a-asset-item id="venus" src="./Assets/venus/scene.gltf"></a-asset-item>
+        <a-asset-item id="earth" src="./Assets/tierra/scene.gltf"></a-asset-item>
+        <a-asset-item id="moon" src="./Assets/moon/scene.gltf"></a-asset-item>
+        <a-asset-item id="rainbow_road" src="./Assets/rainbow_road_64/scene.glb"></a-asset-item>
+        <a-asset-item id="marte" src="./Assets/marte/scene.gltf"></a-asset-item>
+        <a-asset-item id="jupyter" src="./Assets/jupiter/scene.gltf"></a-asset-item>
+        <a-asset-item id="saturno" src="./Assets/realistic_saturn_8k/scene.gltf"></a-asset-item>
+        <a-asset-item id="neptuno" src="./Assets/neptuno/scene.gltf"></a-asset-item>
+        <a-asset-item id="coche" src="./Assets/3ds_-_nintendogs_cats_-_yoshi_kart/scene.gltf"></a-asset-item>
+        <audio id="musica" src="./Assets/music.mp3" preload="auto"></audio>
+        <a-asset-item id="mario" src="./Assets/mario.glb"></a-asset-item>
+      </a-assets>
+
+      
+      <a-sound src="#musica" autoplay="true" loop="true" positional="false" volume="50"></a-sound>
+     
+      <a-sky src="#sky" radius="3000"></a-sky>
+      <a-entity gltf-model="#earth" position="0 0 0" scale="2 2 2" animation="property:rotation; from:0 0 0; to:0 360 0; loop:true; dur:10000; easing:linear">
+      
+      <a-entity id="circuito-fisico" gltf-model="#rainbow_road" scale="0.2 0.2 0.2" position="0 0 0" animation="property:rotation; from:0 0 0; to:0 -360 0; loop:true; dur:10000; easing:linear">
+        <a-entity id="meta" position="8.5 53.5 4"></a-entity>
+        <a-entity id="camera-rig" position="8.5 53.5 0" rotation="0 180 0">
+          
+          <a-camera id="player-camera" wasd-controls="acceleration:70;" 
+                    look-controls="pointerLockEnabled: true"
+                    lock-pitch="margin:50"
+                    position="0 -4 0"
+                    snap-to-mesh="target: #circuito-fisico; offset: 0.7; rayHeight: 2">
+            
+            <a-entity gltf-model="#coche" scale="0.5 0.5 0.5" position="0 -0.7 -1.5" rotation="0 180 0"></a-entity>
+            
+            <a-cylinder src="#rueda" 
+                height="0.15" 
+                radius="0.11" 
+                position="-0.23 -0.57 -1.29" 
+                rotation="0 0 90" 
+                animation="property: rotation; from: 0 0 90; to: -360 0 90; loop: true; dur: 800; easing: linear">
+            </a-cylinder>
+            
+            <a-cylinder src="#rueda" 
+                height="0.15" 
+                radius="0.11" 
+                position="0.23 -0.57 -1.29" 
+                rotation="0 0 90" 
+                animation="property: rotation; from: 0 0 90; to: -360 0 90; loop: true; dur: 800; easing: linear">
+            </a-cylinder>
+
+            <a-cylinder src="#rueda" 
+                height="0.15" 
+                radius="0.075" 
+                position="0.23 -0.57 -1.69" 
+                rotation="0 0 90" 
+                animation="property: rotation; from: 0 0 90; to: -360 0 90; loop: true; dur: 800; easing: linear">
+            </a-cylinder>
+            
+            <a-cylinder src="#rueda" 
+                height="0.15" 
+                radius="0.075" 
+                position="-0.23 -0.57 -1.7" 
+                rotation="0 0 90" 
+                animation="property: rotation; from: 0 0 90; to: -360 0 90; loop: true; dur: 800; easing: linear">
+            </a-cylinder>
+            
+            
+          </a-camera>
+          
+        </a-entity>
+
+        <!-- Coche AI autónomo -->
+        <a-entity id="ai-rig"
+                  position="10.5 51.5 -20"
+                  rotation="0 180 0"
+                  waypoint-follower="speed: 13.15; threshold: 2; lapsToWin: 1"
+                  snap-to-mesh="target: #circuito-fisico; offset: 0.8; rayHeight: 2">
+
+          <a-entity id="ai-coche"
+                    gltf-model="#mario"
+                    scale="0.45 0.45 0.45"
+                    position="0 -0.5 0"
+                    rotation="0 0 0">
+          </a-entity>
+
+        </a-entity>
+        
+      </a-entity>
+    </a-entity>
+
+      <a-entity rotation="5 0 0">
+        <a-entity animation="property:rotation; from:0 0 0; to:0 360 0; loop:true; dur:50000; easing:linear">
+          <a-entity gltf-model="#moon" position="40 0 0" scale="0.8 0.8 0.8" animation="property:rotation; from:0 0 0; to:0 360 0; loop:true; dur:10000; easing:linear"></a-entity>
+        </a-entity>
+      </a-entity>
+
+      <a-entity rotation="-3 0 0">
+        <a-entity animation="property:rotation; from:0 80 0; to:0 440 0; loop:true; dur:110000; easing:linear">
+          <a-entity gltf-model="#mercury" position="100 0 0" scale="2 2 2" animation="property:rotation; from:0 0 0; to:0 360 0; loop:true; dur:10000; easing:linear"></a-entity>
+        </a-entity>
+      </a-entity>
+
+      <a-entity rotation="2 0 0">
+        <a-entity animation="property:rotation; from:0 200 0; to:0 560 0; loop:true; dur:17000; easing:linear">
+          <a-entity gltf-model="#venus" position="170 0 0" scale="7 6.5 7" animation="property:rotation; from:0 0 0; to:0 360 0; loop:true; dur:10000; easing:linear"></a-entity>
+        </a-entity>
+      </a-entity>
+
+
+      <a-entity rotation="0 0 0">
+        <a-entity animation="property:rotation; from:0 310 0; to:0 670 0; loop:true; dur:25000; easing:linear">
+          <a-entity gltf-model="#sun" position="270 0 0" scale="5 5 5"
+            animation__spin="property:rotation; to:0 360 0; loop:true; dur:10000; easing:linear">
+          </a-entity>
+        </a-entity>
+      </a-entity>
+
+      <a-entity rotation="1.8 0 0">
+        <a-entity animation="property:rotation; from:0 45 0; to:0 405 0; loop:true; dur:47000; easing:linear">
+          <a-entity gltf-model="#marte" position="400 0 0" scale="3 3 3" animation="property:rotation; from:0 0 0; to:0 360 0; loop:true; dur:10000; easing:linear"></a-entity>
+        </a-entity>
+      </a-entity>
+
+      <a-entity rotation="-1.3 0 0">
+        <a-entity animation="property:rotation; from:0 260 0; to:0 620 0; loop:true; dur:120000; easing:linear">
+          <a-entity gltf-model="#jupyter" position="620 0 0" scale="100 100 100" animation="property:rotation; from:0 0 0; to:0 360 0; loop:true; dur:10000; easing:linear"></a-entity>
+        </a-entity>
+      </a-entity>
+
+      
+      <a-entity rotation="0 0 0">
+        <a-entity animation="property:rotation; from:0 130 0; to:0 490 0; loop:true; dur:280000; easing:linear">
+          <a-entity gltf-model="#saturno" position="720 0 0" scale="6 6 6" animation="property:rotation; from:0 0 0; to:0 360 0; loop:true; dur:10000; easing:linear"></a-entity>
+        </a-entity>
+      </a-entity>
+
+      <a-entity rotation="-1.8 0 0">
+        <a-entity animation="property:rotation; from:0 330 0; to:0 690 0; loop:true; dur:900000; easing:linear">
+          <a-entity gltf-model="#neptuno" position="1100 0 0" scale="5 5 5" animation="property:rotation; from:0 0 0; to:0 360 0; loop:true; dur:10000; easing:linear"></a-entity>
+        </a-entity>
+      </a-entity>
+
+      <a-entity race-manager="
+      playerCar: #player-camera;
+      aiCar: #ai-coche;
+      aiRig: #ai-rig;
+      finishRadius: 4;
+      lapsToWin: 1">
+    </a-entity>
+
+    </a-scene>
+  </body>
+</html>

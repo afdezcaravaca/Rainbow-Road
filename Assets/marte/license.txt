@@ -1,0 +1,11 @@
+Model Information:
+* title:	Marte
+* source:	https://sketchfab.com/3d-models/marte-0ccc066f8c9b42c49d7317dc12f0ab73
+* author:	marsileus (https://sketchfab.com/marsileus)
+
+Model License:
+* license type:	CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
+* requirements:	Author must be credited. Commercial use is allowed.
+
+If you use this 3D model in your project be sure to copy paste this credit wherever you share it:
+This work is based on "Marte" (https://sketchfab.com/3d-models/marte-0ccc066f8c9b42c49d7317dc12f0ab73) by marsileus (https://sketchfab.com/marsileus) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)

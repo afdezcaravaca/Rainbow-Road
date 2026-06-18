@@ -1,0 +1,11 @@
+Model Information:
+* title:	Go Kart
+* source:	https://sketchfab.com/3d-models/go-kart-2338810f0b1e444bace9bd7796b8c9e4
+* author:	Samuel Thomas (https://sketchfab.com/SamuelTea)
+
+Model License:
+* license type:	CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
+* requirements:	Author must be credited. Commercial use is allowed.
+
+If you use this 3D model in your project be sure to copy paste this credit wherever you share it:
+This work is based on "Go Kart" (https://sketchfab.com/3d-models/go-kart-2338810f0b1e444bace9bd7796b8c9e4) by Samuel Thomas (https://sketchfab.com/SamuelTea) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
